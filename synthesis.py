@@ -8,7 +8,7 @@ from simple_parsing import parse
 import torch
 
 from primitives.dataset import load_longhealth_contexts
-from primitives.hub import save_synthesis
+from primitives.hub import make_synthesis_path, save_synthesis
 from primitives.model import generate_vllm, load_vllm
 from primitives.prompts import COT_PROMPTS, FORMATS, SEED_PROMPTS, SYSTEM_PROMPT
 from primitives.utils import format_duration
@@ -16,7 +16,7 @@ from primitives.utils import format_duration
 
 @dataclass
 class Config:
-    model_name: str = "Llama-3.2-1B-Instruct"
+    model_name: str = "Llama-3.2-3B-Instruct"
     num_samples: int = 16384
     batch_size: int = 1024
     max_question_len: int = 512
@@ -29,7 +29,6 @@ class Config:
 
 def main() -> None:
     config = parse(Config)
-    synthesis_name = f"teacher={config.model_name},num_samples={config.num_samples},cot_ratio={config.cot_ratio:g}"
     contexts = load_longhealth_contexts()
     model, tokenizer = load_vllm(config.model_name)
 
@@ -44,8 +43,8 @@ def main() -> None:
     tensors = defaultdict(list)
     num_batches = math.ceil(len(prompts) / config.batch_size)
     log_time = time.perf_counter()
-    for step, offset in enumerate(range(0, len(prompts), config.batch_size)):
-        batch = prompts[offset : offset + config.batch_size]
+    for step, start in enumerate(range(0, len(prompts), config.batch_size)):
+        batch = prompts[start : start + config.batch_size]
 
         chats = [(SYSTEM_PROMPT.format(context=context), seed_prompt) for context, seed_prompt, _ in batch]
         question_outputs = generate_vllm(model, chats, config.max_question_len, config.question_temperature)
@@ -58,15 +57,16 @@ def main() -> None:
 
         rows.extend({"context": context, "question": question, "cot": cot_prompt, "answer": answer} for (context, _, cot_prompt), question, answer in zip(batch, questions, answers))
         tensors["answer_ids"].append(torch.cat([torch.tensor(output.token_ids) for output in answer_outputs]))
+        # vllm은 샘플링한 토큰의 logprob을 top-k 앞에 붙이므로 빼고 저장.
         tensors["topk_ids"].append(torch.cat([torch.tensor(output.logprobs.token_ids).view(-1, config.topk + 1)[:, 1:] for output in answer_outputs]))
         tensors["topk_logprobs"].append(torch.cat([torch.tensor(output.logprobs.logprobs).view(-1, config.topk + 1)[:, 1:] for output in answer_outputs]))
         tensors["answer_lens"].append(torch.tensor([len(output.token_ids) for output in answer_outputs]))
 
-        print(f"batch {step + 1}/{num_batches} time {format_duration(time.perf_counter() - log_time)}", flush=True)
+        print(f"batch {step + 1}/{num_batches} time {format_duration(time.perf_counter() - log_time)}")
         log_time = time.perf_counter()
 
     tensors = {name: torch.cat(values) for name, values in tensors.items()}
-    save_synthesis(f"synthesis/{synthesis_name}", rows, tensors)
+    save_synthesis(make_synthesis_path(config.model_name, config.num_samples, config.cot_ratio), rows, tensors)
 
 
 if __name__ == "__main__":

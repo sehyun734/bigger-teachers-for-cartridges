@@ -12,7 +12,7 @@ from primitives.plot import GRID_COLOR, METHOD_COLORS, get_method, load_results,
 
 @dataclass
 class Config:
-    model_name: str = "Llama-3.2-1B-Instruct"
+    model_name: str = "Llama-3.2-3B-Instruct"
 
 
 def main() -> None:

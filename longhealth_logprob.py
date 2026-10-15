@@ -7,7 +7,7 @@ from torch.nn.functional import log_softmax
 from transformers import DynamicCache
 
 from primitives.dataset import load_longhealth_corpus, load_longhealth_questions
-from primitives.hub import get_pending_targets, load_cartridge, save_result
+from primitives.hub import get_pending_targets, load_tensors, save_result
 from primitives.model import load_model
 from primitives.prompts import DATE_STRING, LLAMA_USER_TURN
 from primitives.utils import format_duration
@@ -15,12 +15,14 @@ from primitives.utils import format_duration
 
 @dataclass
 class Config:
-    model_name: str = "Llama-3.2-1B-Instruct"
+    model_name: str = "Llama-3.2-3B-Instruct"
 
 
+@torch.no_grad()
 def main() -> None:
+    # 생성 없이 선택지마다 토큰 평균 logprob을 비교해, 형식 실수나 샘플링 노이즈 없이 봄.
     config = parse(Config)
-    targets = get_pending_targets(config.model_name, "longhealth", "logprob")
+    targets = get_pending_targets("longhealth_logprob", config.model_name, "logprob")
     corpus = load_longhealth_corpus()
     samples = load_longhealth_questions(use_cot=False)
     model, tokenizer = load_model(config.model_name)
@@ -30,6 +32,7 @@ def main() -> None:
     answer_prefix_ids = tokenizer("<answer>\n", add_special_tokens=False, return_tensors="pt")["input_ids"][0]
     for target in targets:
         method = target.split("/")[0]
+        # icl과 cartridge는 cache 맨 앞에 bos가 있으므로 base만 bos를 붙임.
         if method == "icl":
             corpus_ids = tokenizer.apply_chat_template([{"role": "system", "content": corpus}], date_string=DATE_STRING, return_tensors="pt")["input_ids"]
             cache = DynamicCache()
@@ -37,7 +40,9 @@ def main() -> None:
             key_value = torch.stack([torch.stack([layer.keys, layer.values]) for layer in cache.layers])
             bos = []
         elif method == "cartridge":
-            sink, cartridge = load_cartridge(target, model.device)
+            tensors = load_tensors(target, "cartridge")
+            sink = tensors["sink"].to(model.device)
+            cartridge = tensors["cartridge"].to(model.device)
             key_value = torch.cat([sink, cartridge.to(sink.dtype)], dim=-2)
             bos = []
         elif method == "base":
@@ -58,13 +63,12 @@ def main() -> None:
             corrects.append(options[scores.index(max(scores))].strip().lower() == answer)
 
             if (step + 1) % 20 == 0:
-                print(f"question {step + 1}/{len(samples)} accuracy {sum(corrects) / len(corrects):.2%} time {format_duration(time.perf_counter() - log_time)}", flush=True)
+                print(f"question {step + 1}/{len(samples)} accuracy {sum(corrects) / len(corrects):.2%} time {format_duration(time.perf_counter() - log_time)}")
                 log_time = time.perf_counter()
 
         accuracy = sum(corrects) / len(samples)
-        print(f"{target} accuracy {accuracy:.2%}", flush=True)
-        result = {"accuracy": accuracy, "corrects": corrects}
-        save_result("longhealth", target, "logprob", result)
+        print(f"{target} accuracy {accuracy:.2%}")
+        save_result(f"longhealth_logprob/{target}", "logprob", {"accuracy": accuracy, "corrects": corrects})
 
 
 if __name__ == "__main__":

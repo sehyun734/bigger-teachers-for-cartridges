@@ -10,12 +10,12 @@ from primitives.plot import METHOD_COLORS, get_method, load_results, save_figure
 
 @dataclass
 class Config:
-    model_name: str = "Llama-3.2-1B-Instruct"
+    model_name: str = "Llama-3.2-3B-Instruct"
 
 
 def main() -> None:
     config = parse(Config)
-    results = load_results("longhealth", config.model_name, "logprob")
+    results = load_results("longhealth_logprob", config.model_name, "logprob")
     targets = list(results)
 
     fig, ax = plt.subplots(figsize=(2 + 2 * len(targets), 5), layout="constrained")

@@ -15,10 +15,16 @@ from primitives.prompts import CORPUS, DATE_STRING, LLAMA_USER_TURN, LONGHEALTH_
 LONGHEALTH_URL = "https://raw.githubusercontent.com/kbressem/LongHealth/refs/heads/main/data/benchmark_v5.json"
 
 
+def load_longhealth_patients(
+    num_patients: int,
+) -> list[tuple[str, dict]]:
+    return sorted(requests.get(LONGHEALTH_URL).json().items())[:num_patients]
+
+
 def load_longhealth_corpus(
     num_patients: int = 10,
 ) -> str:
-    patients = sorted(requests.get(LONGHEALTH_URL).json().items())[:num_patients]
+    patients = load_longhealth_patients(num_patients)
     records = []
     for patient_id, patient in patients:
         notes = [NOTE.format(note_id=note_id, note=note) for note_id, note in patient["texts"].items()]
@@ -29,7 +35,8 @@ def load_longhealth_corpus(
 def load_longhealth_contexts(
     num_patients: int = 10,
 ) -> list[str]:
-    patients = sorted(requests.get(LONGHEALTH_URL).json().items())[:num_patients]
+    # 환자 정보와 노트 하나씩을 묶어 context로 씀.
+    patients = load_longhealth_patients(num_patients)
     contexts = []
     for patient_id, patient in patients:
         notes = [NOTE.format(note_id=note_id, note=note) for note_id, note in patient["texts"].items()]
@@ -41,7 +48,7 @@ def load_longhealth_questions(
     num_patients: int = 10,
     use_cot: bool = True,
 ) -> list[tuple[str, list[str], str]]:
-    patients = sorted(requests.get(LONGHEALTH_URL).json().items())[:num_patients]
+    patients = load_longhealth_patients(num_patients)
     template = LONGHEALTH_QUESTION if use_cot else LONGHEALTH_NO_COT_QUESTION
     samples = []
     for patient_id, patient in patients:
@@ -63,9 +70,9 @@ def load_wikitext(
         if len(tokenizer(text)["input_ids"]) > cartridge_len:
             break
 
+    # cartridge_len개로 자르되 system turn을 닫는 마지막 토큰은 남김.
     input_ids = tokenizer.apply_chat_template([{"role": "system", "content": text}], date_string=DATE_STRING, return_tensors="pt")["input_ids"][0]
-    cartridge_ids = torch.cat([input_ids[:cartridge_len], input_ids[-1:]])
-    return cartridge_ids
+    return torch.cat([input_ids[:cartridge_len], input_ids[-1:]])
 
 
 def load_synthesis(
